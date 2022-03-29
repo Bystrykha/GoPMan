@@ -1,2 +1,2 @@
-# GoPMan
+# GoSaMo
 super-mega-tool
