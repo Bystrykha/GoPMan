@@ -1,2 +1,2 @@
 # GoSaMo
-super-mega-toolZa
+super-mega-toolзa
