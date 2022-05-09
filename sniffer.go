@@ -8,33 +8,37 @@ import (
 	"github.com/google/gopacket/pcapgo"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
 type filters struct {
+	netProtocols   string
+	transProtocols string
 }
 
 func sniffer() {
 	printInterfaces()
 	name := ""
-	//time.Sleep(5 * time.Second)
+
 	fmt.Print("Write name of interface: ")
 	fmt.Scanln(&name)
 
-	fmt.Println("Do you need filters? y/n")
-	filter := ""
-	fmt.Scanln(&filter)
-	switch filter {
+	fmt.Print("Do you need filters? y/n - ")
+	filter := filters{}
+	t := ""
+	fmt.Scanln(&t)
+	switch t {
 	case "y":
-		fmt.Println("Write filter string:")
-		fmt.Scanln(&filter)
+		fmt.Println("Starting with filters.")
+		filter = createFilter()
 	case "n":
 		fmt.Println("Starting without filters.")
-		filter = ""
+
 	default:
 		fmt.Println("wrong answer. Starting without filters.")
-		filter = ""
+
 	}
 	_, err := readTraffic(name, true, filter)
 	if err != nil {
@@ -42,7 +46,16 @@ func sniffer() {
 	}
 }
 
-func readTraffic(name string, print bool, filter string) (int, error) {
+func createFilter() filters {
+	f := filters{"", " "}
+	fmt.Println("Write network protocols:")
+	fmt.Scanln(&f.netProtocols)
+	fmt.Println("Write network protocols:")
+	fmt.Scanln(&f.transProtocols)
+	return f
+}
+
+func readTraffic(name string, print bool, filter filters) (int, error) {
 	var (
 		deviceName  string        = name
 		snapshotLen int32         = 1024
@@ -76,12 +89,6 @@ func readTraffic(name string, print bool, filter string) (int, error) {
 		os.Exit(1)
 	}
 	defer handle.Close()
-	if filter != "" {
-		err = handle.SetBPFFilter(filter)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
 
 	start := time.Now()
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
@@ -90,21 +97,35 @@ func readTraffic(name string, print bool, filter string) (int, error) {
 		select {
 		case packet, _ := <-packetSource.Packets():
 			if print {
-				fmt.Println(packet)
-				err := w.WritePacket(packet.Metadata().CaptureInfo, packet.Data())
-				if err != nil {
-					return 0, err
+				if applyFilter(packet, filter) {
+					fmt.Println(packet)
+					err := w.WritePacket(packet.Metadata().CaptureInfo, packet.Data())
+					if err != nil {
+						return 0, err
+					}
 				}
 			}
 
 			packetCount++
 		default:
-
 		}
 	}
 
 	return packetCount, nil
 
+}
+
+func applyFilter(packet gopacket.Packet, filter filters) bool {
+
+	if strings.Contains(strings.ToLower(filter.netProtocols),
+		strings.ToLower(packet.Layers()[1].LayerType().String())) {
+		if strings.Contains(strings.ToLower(filter.transProtocols),
+			strings.ToLower(packet.Layers()[2].LayerType().String())) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func printInterfaces() {
@@ -124,7 +145,7 @@ func printInterfaces() {
 }
 
 func printInterface(p pcap.Interface, wg *sync.WaitGroup) {
-	n, _ := readTraffic(p.Name, false, "")
+	n, _ := readTraffic(p.Name, false, filters{})
 
 	if n != 0 {
 		fmt.Println("Name: ", p.Name)
