@@ -53,7 +53,7 @@ func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 	log.Println(req.RemoteAddr, " ", req.Method, " ", req.URL)
 
 	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-		msg := "unsupported protocal scheme "+req.URL.Scheme
+		msg := "unsupported protocal scheme " + req.URL.Scheme
 		http.Error(wr, msg, http.StatusBadRequest)
 		log.Println(msg)
 		return
@@ -87,7 +87,7 @@ func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 	io.Copy(wr, resp.Body)
 }
 
-func main() {
+func proxyClient() {
 	var addr = flag.String("addr", "127.0.0.1:8080", "The addr of the application.")
 	flag.Parse()
 
