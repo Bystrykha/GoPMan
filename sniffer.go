@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -8,14 +9,18 @@ import (
 	"github.com/google/gopacket/pcapgo"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 type filters struct {
-	netProtocols   string
-	transProtocols string
+	netProtocols   []string
+	transProtocols []string
+	ports          []string
+	IPs            []string
 }
 
 func sniffer() {
@@ -31,8 +36,8 @@ func sniffer() {
 	fmt.Scanln(&t)
 	switch t {
 	case "y":
-		fmt.Println("Starting with filters.")
 		filter = createFilter()
+		fmt.Println("Starting with filters.")
 	case "n":
 		fmt.Println("Starting without filters.")
 
@@ -47,11 +52,36 @@ func sniffer() {
 }
 
 func createFilter() filters {
-	f := filters{"", " "}
-	fmt.Println("Write network protocols:")
-	fmt.Scanln(&f.netProtocols)
-	fmt.Println("Write network protocols:")
-	fmt.Scanln(&f.transProtocols)
+	fmt.Println("Write network protocols (or \"no\" if you don't need this filter):")
+	net := " "
+	fmt.Scanln(&net)
+
+	fmt.Println("Write transport protocols (or \"no\" if you don't need this filter):")
+	trans := " "
+	fmt.Scanln(&trans)
+
+	fmt.Println("Write ports (or \"no\" if you don't need this filter):")
+	port := ""
+	fmt.Scanln(&port)
+
+	fmt.Println("Write IPs (or \"no\" if you don't need this filter):")
+	ips := ""
+	fmt.Scanln(&ips)
+
+	f := filters{nil, nil, nil, nil}
+	if net != "no" {
+		f.netProtocols = strings.Split(net, ",")
+	}
+	if trans != "no" {
+		f.transProtocols = strings.Split(trans, ",")
+	}
+	if port != "no" {
+		f.ports = strings.Split(port, ",")
+	}
+
+	if ips != "no" {
+		f.IPs = strings.Split(ips, ",")
+	}
 	return f
 }
 
@@ -117,15 +147,128 @@ func readTraffic(name string, print bool, filter filters) (int, error) {
 
 func applyFilter(packet gopacket.Packet, filter filters) bool {
 
-	if strings.Contains(strings.ToLower(filter.netProtocols),
-		strings.ToLower(packet.Layers()[1].LayerType().String())) {
-		if strings.Contains(strings.ToLower(filter.transProtocols),
-			strings.ToLower(packet.Layers()[2].LayerType().String())) {
-			return true
+	filters := 0
+	isFound := false
+
+	if filter.netProtocols != nil {
+		for _, prot := range filter.netProtocols {
+			if isFound {
+				isFound = false
+				break
+			}
+			for _, l := range packet.Layers() {
+				if strings.EqualFold(l.LayerType().String(), prot) {
+					filters += 1
+					isFound = true
+					break
+				}
+			}
 		}
+	} else {
+		filters += 1
+	}
+
+	if filter.transProtocols != nil {
+		for _, prot := range filter.transProtocols {
+			if isFound {
+				isFound = false
+				break
+			}
+			for _, l := range packet.Layers() {
+				if strings.EqualFold(l.LayerType().String(), prot) {
+					filters += 2
+					isFound = true
+					break
+				}
+			}
+		}
+	} else {
+		filters += 2
+	}
+
+	if filter.ports != nil {
+		for _, port := range filter.ports {
+			if isFound {
+				isFound = false
+				break
+			}
+			for _, l := range packet.Layers() {
+				p, err := strconv.Atoi(port)
+				if err == nil && getPort(l) == p {
+					filters += 4
+					isFound = true
+					break
+				}
+			}
+		}
+	} else {
+		filters += 4
+	}
+
+	if filter.IPs != nil {
+		for _, reqIP := range filter.IPs {
+			if isFound {
+				isFound = false
+				break
+			}
+			for _, l := range packet.Layers() {
+				ip, err := getIP(l)
+				if err == nil && ip == reqIP {
+					isFound = true
+					filters += 8
+					break
+				}
+			}
+		}
+	} else {
+		filters += 8
+	}
+
+	if filters == 15 {
+		return true
 	}
 
 	return false
+}
+
+func getPort(l gopacket.Layer) int {
+	contents := gopacket.LayerString(l)
+	if !strings.Contains(contents, "DstPort") {
+		return -1
+	}
+
+	headers := strings.Split(contents, " ")
+
+	for _, h := range headers {
+		if strings.Contains(h, "DstPort") {
+			a := 0
+			for _, d := range h {
+				if unicode.IsDigit(d) {
+					a *= 10
+					a += int(d - '0')
+				}
+			}
+			return a
+		}
+	}
+	return -2
+}
+
+func getIP(l gopacket.Layer) (string, error) {
+	contents := gopacket.LayerString(l)
+	if !strings.Contains(contents, "DstIP") {
+		return "err", errors.New("wrong layer")
+	}
+
+	headers := strings.Split(contents, " ")
+
+	for _, h := range headers {
+		if strings.Contains(h, "DstIP") {
+			a := h[6:]
+			return a, nil
+		}
+	}
+	return "err", errors.New("something strange")
 }
 
 func printInterfaces() {
