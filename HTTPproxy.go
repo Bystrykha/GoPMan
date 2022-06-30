@@ -10,16 +10,16 @@ import (
 	"os"
 )
 
-var HTTPHeaders = map[string]string{"User-Agent":"", "Date":"", "ContentType":"",
-	"ProxyConnection":"", "Accept":"", "Referer":"", "AcceptEncoding":"", "AcceptLanguage":""}
+var HTTPHeaders = map[string]string{"User-Agent": "", "Date": "", "ContentType": "",
+	"ProxyConnection": "", "Accept": "", "Referer": "", "AcceptEncoding": "", "AcceptLanguage": ""}
 var payloadFlag = ""
 
-func modifyCatalog(){
+func modifyCatalog() {
 	fmt.Println("change http headers? [y/n]")
 	var flag string
 	fmt.Scanf("%s\n", &flag)
-	if flag == "y"{
-		for k := range HTTPHeaders{
+	if flag == "y" {
+		for k := range HTTPHeaders {
 			fmt.Print(k, " : ")
 			var headerValue string
 			fmt.Scanf("%s\n", &headerValue)
@@ -45,11 +45,11 @@ func copyHeader(dst, src http.Header) {
 func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 	log.Println(req.RemoteAddr, " ", req.Method, " ", req.URL)
 	a := req.Header
-	for k, v := range a{
+	for k, v := range a {
 		fmt.Println(k, ":", v)
 	}
 
-	for k, v := range HTTPHeaders{
+	for k, v := range HTTPHeaders {
 		if v != "" {
 			req.Header.Set(k, v)
 		}
@@ -57,9 +57,9 @@ func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 
 	//req.Header.Set("User-Agent", "Golang_Spider_Bot/3.0")
 
-	if payloadFlag == "y"{
+	if payloadFlag == "y" {
 		file, err := os.Open("payload.txt")
-		if err != nil{
+		if err != nil {
 			os.Exit(0)
 		}
 		req.Body = ioutil.NopCloser(bufio.NewReader(file))
@@ -73,7 +73,7 @@ func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 	io.Copy(wr, resp.Body)
 }
 
-func main(){
+func startProxy() {
 	modifyCatalog()
 	address := "127.0.0.1:8080"
 	handler := &proxy{}

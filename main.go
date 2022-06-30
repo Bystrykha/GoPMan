@@ -5,7 +5,7 @@ import (
 )
 
 func main() {
-	fmt.Println("do you need sniffer (1) or packet crafter (2)?")
+	fmt.Println("do you need sniffer (1) or proxy (2)?")
 	prog := 1
 	fmt.Scanln(&prog)
 	switch prog {
@@ -13,7 +13,7 @@ func main() {
 		sniffer()
 		break
 	case 2:
-		crafter()
+		startProxy()
 		break
 	default:
 		fmt.Println("wrong program")
