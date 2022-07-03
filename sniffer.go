@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/google/gopacket"
@@ -8,6 +10,8 @@ import (
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/pcapgo"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -19,13 +23,30 @@ import (
 type filters struct {
 	netProtocols   []string
 	transProtocols []string
-	ports          []string
-	IPs            []string
+	dstPorts       []string
+	dstIPs         []string
+	srcIPs         []string
 }
 
 func sniffer() {
+	name, err := os.Hostname()
+	if err != nil {
+		fmt.Printf("Oops: %v\n", err)
+		return
+	}
+
+	addrs, err := net.LookupHost(name)
+	if err != nil {
+		fmt.Printf("Oops: %v\n", err)
+		return
+	}
+
+	for _, a := range addrs {
+		fmt.Println(a)
+	}
+
 	printInterfaces()
-	name := ""
+	name = ""
 
 	fmt.Print("Write name of interface: ")
 	fmt.Scanln(&name)
@@ -45,7 +66,7 @@ func sniffer() {
 		fmt.Println("wrong answer. Starting without filters.")
 
 	}
-	_, err := readTraffic(name, true, filter)
+	_, err = readTraffic(addrs, name, true, filter)
 	if err != nil {
 		return
 	}
@@ -64,11 +85,15 @@ func createFilter() filters {
 	port := ""
 	fmt.Scanln(&port)
 
-	fmt.Println("Write IPs (or \"no\" if you don't need this filter):")
-	ips := ""
-	fmt.Scanln(&ips)
+	fmt.Println("Write dstIPs (or \"no\" if you don't need this filter):")
+	dstIPs := ""
+	fmt.Scanln(&dstIPs)
 
-	f := filters{nil, nil, nil, nil}
+	fmt.Println("Write srcIPs (or \"no\" if you don't need this filter):")
+	srcIPs := ""
+	fmt.Scanln(&srcIPs)
+
+	f := filters{nil, nil, nil, nil, nil}
 	if net != "no" {
 		f.netProtocols = strings.Split(net, ",")
 	}
@@ -76,16 +101,20 @@ func createFilter() filters {
 		f.transProtocols = strings.Split(trans, ",")
 	}
 	if port != "no" {
-		f.ports = strings.Split(port, ",")
+		f.dstPorts = strings.Split(port, ",")
 	}
 
-	if ips != "no" {
-		f.IPs = strings.Split(ips, ",")
+	if dstIPs != "no" {
+		f.dstIPs = strings.Split(dstIPs, ",")
+	}
+
+	if srcIPs != "no" {
+		f.dstIPs = strings.Split(srcIPs, ",")
 	}
 	return f
 }
 
-func readTraffic(name string, print bool, filter filters) (int, error) {
+func readTraffic(addrs []string, name string, print bool, filter filters) (int, error) {
 	var (
 		deviceName  string        = name
 		snapshotLen int32         = 1024
@@ -127,6 +156,7 @@ func readTraffic(name string, print bool, filter filters) (int, error) {
 		select {
 		case packet, _ := <-packetSource.Packets():
 			if print {
+				go processHttp(packet, addrs)
 				if applyFilter(packet, filter) {
 					fmt.Println(packet)
 					err := w.WritePacket(packet.Metadata().CaptureInfo, packet.Data())
@@ -142,11 +172,33 @@ func readTraffic(name string, print bool, filter filters) (int, error) {
 	}
 
 	return packetCount, nil
+}
 
+func processHttp(packet gopacket.Packet, addrs []string) {
+	if isHttp(packet, addrs) {
+		reader := bytes.NewReader(packet.ApplicationLayer().Payload())
+		req, err := http.ReadRequest(bufio.NewReader(reader))
+		if err == nil {
+			//todo решить что делать с этой ошибкой
+		}
+		p := proxy{}
+		//p.ServeHTTP()
+	}
+}
+
+func isHttp(packet gopacket.Packet, addrs []string) bool {
+	f := filters{
+		netProtocols:   nil,
+		transProtocols: nil,
+		dstPorts:       []string{"80"},
+		dstIPs:         nil,
+		srcIPs:         addrs,
+	}
+
+	return applyFilter(packet, f)
 }
 
 func applyFilter(packet gopacket.Packet, filter filters) bool {
-
 	filters := 0
 	isFound := false
 
@@ -186,8 +238,8 @@ func applyFilter(packet gopacket.Packet, filter filters) bool {
 		filters += 2
 	}
 
-	if filter.ports != nil {
-		for _, port := range filter.ports {
+	if filter.dstPorts != nil {
+		for _, port := range filter.dstPorts {
 			if isFound {
 				isFound = false
 				break
@@ -205,14 +257,14 @@ func applyFilter(packet gopacket.Packet, filter filters) bool {
 		filters += 4
 	}
 
-	if filter.IPs != nil {
-		for _, reqIP := range filter.IPs {
+	if filter.dstIPs != nil {
+		for _, reqIP := range filter.dstIPs {
 			if isFound {
 				isFound = false
 				break
 			}
 			for _, l := range packet.Layers() {
-				ip, err := getIP(l)
+				ip, err := getDstIP(l)
 				if err == nil && ip == reqIP {
 					isFound = true
 					filters += 8
@@ -224,7 +276,26 @@ func applyFilter(packet gopacket.Packet, filter filters) bool {
 		filters += 8
 	}
 
-	if filters == 15 {
+	if filter.srcIPs != nil {
+		for _, reqIP := range filter.srcIPs {
+			if isFound {
+				isFound = false
+				break
+			}
+			for _, l := range packet.Layers() {
+				ip, err := getSrcIP(l)
+				if err == nil && ip == reqIP {
+					isFound = true
+					filters += 16
+					break
+				}
+			}
+		}
+	} else {
+		filters += 16
+	}
+
+	if filters == 31 {
 		return true
 	}
 
@@ -254,7 +325,7 @@ func getPort(l gopacket.Layer) int {
 	return -2
 }
 
-func getIP(l gopacket.Layer) (string, error) {
+func getDstIP(l gopacket.Layer) (string, error) {
 	contents := gopacket.LayerString(l)
 	if !strings.Contains(contents, "DstIP") {
 		return "err", errors.New("wrong layer")
@@ -264,6 +335,23 @@ func getIP(l gopacket.Layer) (string, error) {
 
 	for _, h := range headers {
 		if strings.Contains(h, "DstIP") {
+			a := h[6:]
+			return a, nil
+		}
+	}
+	return "err", errors.New("something strange")
+}
+
+func getSrcIP(l gopacket.Layer) (string, error) {
+	contents := gopacket.LayerString(l)
+	if !strings.Contains(contents, "SrcIP") {
+		return "err", errors.New("wrong layer")
+	}
+
+	headers := strings.Split(contents, " ")
+
+	for _, h := range headers {
+		if strings.Contains(h, "SrcIP") {
 			a := h[6:]
 			return a, nil
 		}
@@ -288,7 +376,7 @@ func printInterfaces() {
 }
 
 func printInterface(p pcap.Interface, wg *sync.WaitGroup) {
-	n, _ := readTraffic(p.Name, false, filters{})
+	n, _ := readTraffic(nil, p.Name, false, filters{})
 
 	if n != 0 {
 		fmt.Println("Name: ", p.Name)
